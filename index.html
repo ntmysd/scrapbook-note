@@ -93,6 +93,10 @@
     min-height: 100vh;
     padding-bottom: 120px;
     overflow: visible;
+    background-image:
+      radial-gradient(circle, rgba(0,0,0,0.07) 1px, transparent 1.4px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+    background-size: 22px 22px, 220px 220px;
   }
   #board.ready{ transition: margin-top .15s ease; }
   #dropHint{
@@ -135,7 +139,7 @@
     position:absolute;
     width: 78px; height: 26px;
     top: -12px; left: 50%;
-    background: repeating-linear-gradient(45deg, var(--tape-c1), var(--tape-c1) 6px, var(--tape-c2) 6px, var(--tape-c2) 12px);
+    background-repeat: repeat;
     opacity: 0.75;
     box-shadow: 0 1px 2px rgba(0,0,0,0.15);
     transform: translateX(-50%) rotate(var(--tape-r));
@@ -223,6 +227,7 @@
   </div>
   <div class="toolbar">
     <button class="btn primary" id="addBtn"><span class="full">＋ 写真を追加</span><span class="short">＋ 追加</span></button>
+    <button class="btn ghost" id="exportBtn"><span class="full">PNGで書き出す</span><span class="short">書き出す</span></button>
     <button class="btn ghost" id="clearBtn">全部消す</button>
     <input type="file" id="fileInput" accept="image/*" multiple>
   </div>
@@ -240,6 +245,7 @@ import { removeBackground } from "https://cdn.jsdelivr.net/npm/@imgly/background
 const board = document.getElementById('board');
 const fileInput = document.getElementById('fileInput');
 const addBtn = document.getElementById('addBtn');
+const exportBtn = document.getElementById('exportBtn');
 const clearBtn = document.getElementById('clearBtn');
 const toast = document.getElementById('toast');
 
@@ -370,8 +376,7 @@ function renderCard(entry){
   const tape = document.createElement('div');
   tape.className = 'tape';
   const [c1, c2] = TAPE_COLORS[Math.abs(hashCode(entry.id)) % TAPE_COLORS.length];
-  tape.style.setProperty('--tape-c1', c1);
-  tape.style.setProperty('--tape-c2', c2);
+  tape.style.backgroundImage = `url("${tapePatternDataURI(c1, c2)}")`;
   tape.style.setProperty('--tape-r', (Math.random()*10 - 5) + 'deg');
 
   const wrap = document.createElement('div');
@@ -436,6 +441,14 @@ function hashCode(str){
   let h = 0;
   for (let i=0;i<str.length;i++){ h = (h*31 + str.charCodeAt(i)) | 0; }
   return h;
+}
+
+function tapePatternDataURI(c1, c2){
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12'>` +
+    `<rect width='12' height='12' fill='${c1}'/>` +
+    `<path d='M-3,3 L3,-3 M0,12 L12,0 M9,15 L15,9' stroke='${c2}' stroke-width='5'/>` +
+    `</svg>`;
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
 function bringToFront(card, entry){
@@ -590,6 +603,58 @@ addBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   addFiles(fileInput.files);
   fileInput.value = '';
+});
+
+let html2canvasLoadPromise = null;
+function loadHtml2Canvas(){
+  if (window.html2canvas) return Promise.resolve();
+  if (html2canvasLoadPromise) return html2canvasLoadPromise;
+  html2canvasLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    script.onload = resolve;
+    script.onerror = () => reject(new Error('html2canvas load failed'));
+    document.head.appendChild(script);
+  });
+  return html2canvasLoadPromise;
+}
+
+exportBtn.addEventListener('click', async () => {
+  if (!board.querySelector('.photo-card')){
+    showToast('ノートに写真がまだありません');
+    return;
+  }
+  showToast('PNGを書き出しています...', true);
+  try{
+    await loadHtml2Canvas();
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
+
+    const canvas = await window.html2canvas(board, {
+      backgroundColor: '#f6efe0',
+      scale: Math.max(2, window.devicePixelRatio || 1),
+      width: board.scrollWidth,
+      height: board.scrollHeight,
+      windowWidth: board.scrollWidth,
+      windowHeight: board.scrollHeight,
+      useCORS: true,
+      ignoreElements: (el) => el.id === 'dropHint' || el.id === 'toast' ||
+        el.classList?.contains('del-btn') || el.classList?.contains('rotate-handle') || el.classList?.contains('resize-handle'),
+    });
+
+    const dataUrl = canvas.toDataURL('image/png');
+    const d = new Date();
+    const stamp = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = `scrapbook-note-${stamp}.png`;
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => link.remove(), 1000);
+    hideToast();
+  }catch(err){
+    console.error('PNG export failed', err);
+    showToast('書き出しに失敗しました');
+  }
 });
 
 clearBtn.addEventListener('click', async () => {
