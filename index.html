@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="スクラップノート">
+<meta name="theme-color" content="#f6efe0">
+<title>スクラップノート</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Kaisei+Decol&family=Yomogi&family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "onnxruntime-web": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.min.mjs",
+    "onnxruntime-web/webgpu": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.webgpu.min.mjs"
+  }
+}
+</script>
+<style>
+  :root{
+    --paper: #f6efe0;
+    --ink: #4a4038;
+    --accent: #d98a7c;
+  }
+  *{ box-sizing: border-box; }
+  html,body{
+    margin:0; padding:0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Klee One', sans-serif;
+    min-height: 100%;
+  }
+  body{
+    background-image:
+      radial-gradient(circle, rgba(0,0,0,0.07) 1px, transparent 1.4px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+    background-size: 22px 22px, 220px 220px;
+  }
+
+  header{
+    position: fixed; top:0; left:0; right:0; z-index: 1000;
+    min-height: 68px;
+    display:flex; align-items:center; justify-content:space-between;
+    gap: 10px;
+    padding: 10px 20px;
+    background: rgba(246,239,224,0.85);
+    backdrop-filter: blur(6px);
+    border-bottom: 2px dashed rgba(74,64,56,0.25);
+  }
+  header h1{
+    font-family: 'Kaisei Decol', serif;
+    font-size: 26px;
+    margin:0;
+    color: var(--ink);
+    letter-spacing: 1px;
+    white-space: nowrap;
+  }
+  .btn .short{ display:none; }
+  header .sub{
+    font-size: 12px;
+    opacity: 0.6;
+    margin-left: 10px;
+    display:none;
+  }
+  @media (min-width:640px){ header .sub{ display:inline; } }
+
+  .toolbar{ display:flex; gap:8px; align-items:center; flex-shrink:0; }
+  .btn{
+    font-family: 'Klee One', sans-serif;
+    border: 2px solid var(--ink);
+    background: #fffdf8;
+    color: var(--ink);
+    padding: 8px 16px;
+    border-radius: 999px;
+    cursor:pointer;
+    font-size: 14px;
+    box-shadow: 2px 2px 0 rgba(74,64,56,0.2);
+    transition: transform .1s ease;
+    white-space: nowrap;
+  }
+  .btn:hover{ transform: translateY(-1px); }
+  .btn:active{ transform: translateY(1px); box-shadow: 1px 1px 0 rgba(74,64,56,0.2); }
+  .btn.primary{ background: var(--accent); color:#fff; border-color: var(--accent); }
+  .btn.ghost{ opacity: 0.75; font-size:13px; }
+  input[type=file]{ display:none; }
+
+  #board{
+    position: relative;
+    width: 100%;
+    min-height: 100vh;
+    padding-bottom: 120px;
+    overflow: visible;
+  }
+  #board.ready{ transition: margin-top .15s ease; }
+  #dropHint{
+    position:absolute; inset: 24px 24px 24px 24px;
+    border: 3px dashed rgba(74,64,56,0.35);
+    border-radius: 18px;
+    display:flex; align-items:center; justify-content:center;
+    font-family: 'Yomogi', cursive;
+    font-size: 22px;
+    color: rgba(74,64,56,0.45);
+    text-align:center;
+    pointer-events:none;
+    transition: opacity .15s ease;
+  }
+  #board.has-photos #dropHint{ display:none; }
+  #board.drag-over #dropHint{
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .photo-card{
+    position:absolute;
+    width: 190px;
+    touch-action: none;
+    cursor: grab;
+    user-select: none;
+  }
+  .photo-card.dragging{ cursor: grabbing; z-index: 9999 !important; }
+  .photo-card .cutout-wrap{ position:relative; }
+  .photo-card img{
+    display:block;
+    width: 100%;
+    height: auto;
+    max-height: 240px;
+    object-fit: contain;
+    filter: drop-shadow(0 8px 10px rgba(0,0,0,0.28));
+    pointer-events:none;
+  }
+  .tape{
+    position:absolute;
+    width: 78px; height: 26px;
+    top: -12px; left: 50%;
+    background: repeating-linear-gradient(45deg, var(--tape-c1), var(--tape-c1) 6px, var(--tape-c2) 6px, var(--tape-c2) 12px);
+    opacity: 0.75;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    transform: translateX(-50%) rotate(var(--tape-r));
+    pointer-events:none;
+  }
+  .caption{
+    font-family: 'Yomogi', cursive;
+    font-size: 15px;
+    text-align:center;
+    margin-top: 6px;
+    padding: 2px 4px;
+    color: var(--ink);
+    outline: none;
+    min-height: 20px;
+    transform: rotate(-1.5deg);
+  }
+  .caption:focus{ background: rgba(255,255,255,0.5); border-radius:4px; }
+  .caption:empty::before{
+    content: attr(data-placeholder);
+    opacity: 0.4;
+  }
+
+  .del-btn, .rotate-handle, .resize-handle{
+    opacity:0; pointer-events:none;
+    transition: opacity .12s ease;
+  }
+  .photo-card:hover .del-btn, .photo-card:hover .rotate-handle, .photo-card:hover .resize-handle,
+  .photo-card:focus-within .del-btn, .photo-card:focus-within .rotate-handle, .photo-card:focus-within .resize-handle,
+  .photo-card.active .del-btn, .photo-card.active .rotate-handle, .photo-card.active .resize-handle{
+    opacity:1; pointer-events:auto;
+  }
+  .del-btn{
+    position:absolute; top:-14px; right:-14px;
+    width:26px; height:26px; border-radius:50%;
+    background:#fff; border:2px solid var(--ink);
+    display:flex; align-items:center; justify-content:center;
+    font-size:14px; line-height:1; cursor:pointer;
+    box-shadow: 1px 1px 0 rgba(74,64,56,0.25);
+  }
+  .rotate-handle, .resize-handle{
+    position:absolute;
+    width:24px; height:24px; border-radius:50%;
+    background:#fff; border:2px solid var(--ink);
+    display:flex; align-items:center; justify-content:center;
+    font-size:13px; cursor: pointer;
+    box-shadow: 1px 1px 0 rgba(74,64,56,0.25);
+  }
+  .rotate-handle{ top:-14px; left:-14px; cursor: grab; }
+  .resize-handle{ bottom:26px; right:-14px; cursor: nwse-resize; }
+
+  @media (pointer: coarse){
+    .del-btn, .rotate-handle, .resize-handle{ opacity: 0.9; pointer-events: auto; width:32px; height:32px; font-size:16px; }
+    .resize-handle{ bottom:32px; }
+  }
+  @media (max-width: 480px){
+    header{ height:58px; padding:0 12px; }
+    header h1{ font-size:20px; }
+    .btn{ padding:7px 12px; font-size:13px; }
+    #board{ min-height: calc(100vh - 58px); margin-top:58px; }
+    #dropHint{ inset: 70px 14px 14px 14px; font-size:17px; padding:0 10px; }
+    .photo-card{ width: 148px; }
+    .caption{ font-size:14px; }
+    .btn .full{ display:none; }
+    .btn .short{ display:inline; }
+  }
+
+  #toast{
+    position: fixed; right: 20px; bottom: 20px; z-index: 2000;
+    background: var(--ink); color: #fff;
+    padding: 10px 18px; border-radius: 10px;
+    font-size: 13px; opacity:0; transform: translateY(8px);
+    transition: opacity .2s ease, transform .2s ease;
+    pointer-events:none;
+    max-width: 280px;
+  }
+  #toast.show{ opacity:0.92; transform: translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <div style="display:flex; align-items:baseline;">
+    <h1>スクラップノート</h1>
+    <span class="sub">写真を投げ込むと、切り抜いて貼ってくれます</span>
+  </div>
+  <div class="toolbar">
+    <button class="btn primary" id="addBtn"><span class="full">＋ 写真を追加</span><span class="short">＋ 追加</span></button>
+    <button class="btn ghost" id="clearBtn">全部消す</button>
+    <input type="file" id="fileInput" accept="image/*" multiple>
+  </div>
+</header>
+
+<div id="board">
+  <div id="dropHint">ここに写真をドラッグ&ドロップ<br>（または「＋ 写真を追加」）</div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+import { removeBackground } from "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/dist/index.mjs";
+
+const board = document.getElementById('board');
+const fileInput = document.getElementById('fileInput');
+const addBtn = document.getElementById('addBtn');
+const clearBtn = document.getElementById('clearBtn');
+const toast = document.getElementById('toast');
+
+const DB_NAME = 'scrapbook-note';
+const STORE = 'photos';
+const TAPE_COLORS = [
+  ['#f7d9c4','#f3c39f'],
+  ['#cfe8d8','#aad4bc'],
+  ['#d8e0f0','#b7c6ea'],
+  ['#f5e2ec','#eabdd6'],
+  ['#fff3c2','#f6de88'],
+];
+
+function openDB(){
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbPut(entry){
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(entry);
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+}
+async function dbGetAll(){
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly');
+    const req = tx.objectStore(STORE).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbDelete(id){
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).delete(id);
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+}
+async function dbClear(){
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).clear();
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+}
+
+let maxZ = 1;
+let placeCursor = { x: 24, y: 24, rowH: 0 };
+
+function showToast(msg, persist){
+  toast.textContent = msg;
+  toast.classList.add('show');
+  if (!persist){
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toast.classList.remove('show'), 2200);
+  }
+}
+function hideToast(){ toast.classList.remove('show'); }
+
+function todayLabel(){
+  const d = new Date();
+  return `${d.getMonth()+1}/${d.getDate()}`;
+}
+
+function nextPosition(cardW, cardH){
+  const boardWidth = board.clientWidth || window.innerWidth;
+  if (placeCursor.x + cardW + 24 > boardWidth){
+    placeCursor.x = 24;
+    placeCursor.y += placeCursor.rowH + 20;
+    placeCursor.rowH = 0;
+  }
+  const pos = {
+    x: placeCursor.x + (Math.random()*16 - 8),
+    y: placeCursor.y + (Math.random()*16 - 8),
+  };
+  placeCursor.x += cardW + 24;
+  placeCursor.rowH = Math.max(placeCursor.rowH, cardH);
+  return pos;
+}
+
+function advanceCursorPast(entries){
+  let maxBottom = 24;
+  for (const e of entries) maxBottom = Math.max(maxBottom, e.y + 260);
+  placeCursor = { x: 24, y: maxBottom, rowH: 0 };
+}
+
+const headerEl = document.querySelector('header');
+function syncHeaderOffset(){
+  board.style.marginTop = headerEl.offsetHeight + 'px';
+  board.classList.add('ready');
+}
+window.addEventListener('resize', syncHeaderOffset);
+
+function updateBoardHeight(){
+  const cards = board.querySelectorAll('.photo-card');
+  let maxBottom = window.innerHeight - headerEl.offsetHeight;
+  cards.forEach(c => {
+    const top = parseFloat(c.style.top) || 0;
+    maxBottom = Math.max(maxBottom, top + c.offsetHeight + 60);
+  });
+  board.style.minHeight = maxBottom + 'px';
+}
+
+function markHasPhotos(){
+  const has = board.querySelectorAll('.photo-card').length > 0;
+  board.classList.toggle('has-photos', has);
+}
+
+function renderCard(entry){
+  const card = document.createElement('div');
+  card.className = 'photo-card';
+  card.dataset.id = entry.id;
+  card.style.left = entry.x + 'px';
+  card.style.top = entry.y + 'px';
+  card.style.zIndex = entry.z;
+  card.style.transform = `rotate(${entry.rot}deg) scale(${entry.scale})`;
+  maxZ = Math.max(maxZ, entry.z);
+
+  const tape = document.createElement('div');
+  tape.className = 'tape';
+  const [c1, c2] = TAPE_COLORS[Math.abs(hashCode(entry.id)) % TAPE_COLORS.length];
+  tape.style.setProperty('--tape-c1', c1);
+  tape.style.setProperty('--tape-c2', c2);
+  tape.style.setProperty('--tape-r', (Math.random()*10 - 5) + 'deg');
+
+  const wrap = document.createElement('div');
+  wrap.className = 'cutout-wrap';
+  const img = document.createElement('img');
+  img.src = entry.src;
+  img.draggable = false;
+  wrap.appendChild(img);
+
+  const caption = document.createElement('div');
+  caption.className = 'caption';
+  caption.contentEditable = 'true';
+  caption.spellcheck = false;
+  caption.dataset.placeholder = 'ひとことメモ...';
+  caption.textContent = entry.caption || '';
+
+  const delBtn = document.createElement('div');
+  delBtn.className = 'del-btn';
+  delBtn.textContent = '×';
+  delBtn.setAttribute('role', 'button');
+  delBtn.setAttribute('tabindex', '0');
+  delBtn.setAttribute('aria-label', '削除');
+  const rotHandle = document.createElement('div');
+  rotHandle.className = 'rotate-handle';
+  rotHandle.textContent = '⟳';
+  rotHandle.setAttribute('role', 'button');
+  rotHandle.setAttribute('tabindex', '0');
+  rotHandle.setAttribute('aria-label', '回転');
+  const resizeHandle = document.createElement('div');
+  resizeHandle.className = 'resize-handle';
+  resizeHandle.textContent = '⤡';
+  resizeHandle.setAttribute('role', 'button');
+  resizeHandle.setAttribute('tabindex', '0');
+  resizeHandle.setAttribute('aria-label', '拡大縮小');
+  card.append(tape, wrap, caption, delBtn, rotHandle, resizeHandle);
+  board.appendChild(card);
+
+  bringToFront(card, entry);
+  attachDrag(card, entry);
+  attachRotate(rotHandle, card, entry);
+  attachResize(resizeHandle, card, entry);
+
+  delBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    card.remove();
+    await dbDelete(entry.id);
+    markHasPhotos();
+    updateBoardHeight();
+  });
+
+  caption.addEventListener('blur', async () => {
+    entry.caption = caption.textContent.trim();
+    await dbPut(entry);
+  });
+  caption.addEventListener('pointerdown', e => e.stopPropagation());
+
+  markHasPhotos();
+  return card;
+}
+
+function hashCode(str){
+  let h = 0;
+  for (let i=0;i<str.length;i++){ h = (h*31 + str.charCodeAt(i)) | 0; }
+  return h;
+}
+
+function bringToFront(card, entry){
+  maxZ += 1;
+  entry.z = maxZ;
+  card.style.zIndex = maxZ;
+}
+
+function attachDrag(card, entry){
+  let startX, startY, origX, origY, dragging = false;
+  card.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.del-btn, .rotate-handle, .resize-handle') || e.target.classList.contains('caption')) return;
+    dragging = true;
+    card.classList.add('dragging', 'active');
+    card.setPointerCapture(e.pointerId);
+    startX = e.clientX; startY = e.clientY;
+    origX = entry.x; origY = entry.y;
+    bringToFront(card, entry);
+  });
+  card.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    entry.x = origX + (e.clientX - startX);
+    entry.y = origY + (e.clientY - startY);
+    card.style.left = entry.x + 'px';
+    card.style.top = entry.y + 'px';
+    updateBoardHeight();
+  });
+  const end = async (e) => {
+    if (!dragging) return;
+    dragging = false;
+    card.classList.remove('dragging');
+    await dbPut(entry);
+  };
+  card.addEventListener('pointerup', end);
+  card.addEventListener('pointercancel', end);
+}
+
+function attachRotate(handle, card, entry){
+  let center, startAngle, startRot, active = false;
+  handle.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    active = true;
+    handle.setPointerCapture(e.pointerId);
+    const rect = card.getBoundingClientRect();
+    center = { x: rect.left + rect.width/2, y: rect.top + rect.height/2 };
+    startAngle = Math.atan2(e.clientY - center.y, e.clientX - center.x);
+    startRot = entry.rot;
+    bringToFront(card, entry);
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!active) return;
+    const angle = Math.atan2(e.clientY - center.y, e.clientX - center.x);
+    entry.rot = startRot + (angle - startAngle) * (180/Math.PI);
+    card.style.transform = `rotate(${entry.rot}deg) scale(${entry.scale})`;
+  });
+  const end = async (e) => {
+    if (!active) return;
+    active = false;
+    await dbPut(entry);
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+}
+
+function attachResize(handle, card, entry){
+  let center, startDist, startScale, active = false;
+  handle.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    active = true;
+    handle.setPointerCapture(e.pointerId);
+    const rect = card.getBoundingClientRect();
+    center = { x: rect.left + rect.width/2, y: rect.top + rect.height/2 };
+    startDist = Math.hypot(e.clientX - center.x, e.clientY - center.y);
+    startScale = entry.scale;
+    bringToFront(card, entry);
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!active) return;
+    const dist = Math.hypot(e.clientX - center.x, e.clientY - center.y);
+    entry.scale = Math.min(2.4, Math.max(0.4, startScale * (dist / startDist)));
+    card.style.transform = `rotate(${entry.rot}deg) scale(${entry.scale})`;
+    updateBoardHeight();
+  });
+  const end = async (e) => {
+    if (!active) return;
+    active = false;
+    await dbPut(entry);
+  };
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
+}
+
+function blobToDataURL(blob){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function cardBaseSize(){
+  const w = window.matchMedia('(max-width: 480px)').matches ? 148 : 190;
+  return { w, h: Math.round(w * 220/190) };
+}
+
+async function addPhoto(file){
+  const { w: cardW, h: cardH } = cardBaseSize();
+  const pos = nextPosition(cardW, cardH);
+  let cutoutSrc;
+  try{
+    const resultBlob = await removeBackground(file, {
+      model: 'isnet_fp16',
+      output: { format: 'image/png', quality: 0.85 },
+      progress: (key, current, total) => {
+        if (total) showToast(`切り抜き中... ${Math.round(current/total*100)}%（初回はモデル読み込みで少し時間がかかります）`, true);
+      },
+    });
+    cutoutSrc = await blobToDataURL(resultBlob);
+  }catch(err){
+    console.error('background removal failed', err);
+    showToast('背景除去に失敗したので、そのまま貼り付けました');
+    cutoutSrc = await blobToDataURL(file);
+  }
+
+  const entry = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+    src: cutoutSrc,
+    x: pos.x, y: pos.y,
+    rot: Math.random()*14 - 7,
+    scale: 1,
+    z: ++maxZ,
+    caption: todayLabel(),
+    createdAt: Date.now(),
+  };
+  await dbPut(entry);
+  renderCard(entry);
+  updateBoardHeight();
+}
+
+async function addFiles(fileList){
+  const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+  if (!files.length) return;
+  for (let i=0; i<files.length; i++){
+    showToast(`${i+1}/${files.length} 枚目を切り抜き中...`, true);
+    await addPhoto(files[i]);
+  }
+  hideToast();
+}
+
+addBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  addFiles(fileInput.files);
+  fileInput.value = '';
+});
+
+clearBtn.addEventListener('click', async () => {
+  if (!confirm('ノート上の写真を全部消します。よろしいですか？')) return;
+  await dbClear();
+  board.querySelectorAll('.photo-card').forEach(c => c.remove());
+  placeCursor = { x: 24, y: 24, rowH: 0 };
+  markHasPhotos();
+  updateBoardHeight();
+});
+
+['dragover','dragenter'].forEach(ev => document.addEventListener(ev, (e) => {
+  e.preventDefault();
+  board.classList.add('drag-over');
+}));
+['dragleave','drop'].forEach(ev => document.addEventListener(ev, (e) => {
+  if (ev === 'dragleave' && e.relatedTarget) return;
+  board.classList.remove('drag-over');
+}));
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+});
+
+document.addEventListener('pointerdown', (e) => {
+  document.querySelectorAll('.photo-card.active').forEach(c => {
+    if (!c.contains(e.target)) c.classList.remove('active');
+  });
+});
+
+(async function init(){
+  syncHeaderOffset();
+  const entries = await dbGetAll();
+  entries.sort((a,b) => a.z - b.z);
+  entries.forEach(renderCard);
+  advanceCursorPast(entries);
+  updateBoardHeight();
+})();
+</script>
+</body>
+</html>
